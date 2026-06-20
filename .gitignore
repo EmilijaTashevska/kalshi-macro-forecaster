@@ -1,0 +1,82 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+.installed.cfg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# ── uv / venv ──
+.venv/
+venv/
+.python-version
+uv.lock.bak
+
+# ── Environment / secrets ──
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ── Data (large, regenerable, sometimes private) ──
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/raw/
+data/sft/
+data/cache/
+data/parquet/
+*.parquet
+*.jsonl
+
+# ── Models (large binary) ──
+models/*
+!models/.gitkeep
+
+# ── Notebooks ──
+.ipynb_checkpoints/
+notebooks/*-checkpoint.ipynb
+notebooks/scratch/
+
+# ── Reports — keep markdown, ignore generated artifacts ──
+reports/figures/
+reports/*.html
+reports/*.pdf
+
+# ── Logs ──
+logs/
+*.log
+
+# ── Experiment tracking ──
+wandb/
+mlruns/
+
+# ── IDE / OS ──
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── Misc ──
+.cache/
+tmp/
