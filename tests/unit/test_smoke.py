@@ -10,12 +10,10 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-import pytest
-
 import kalshi_train
 from kalshi_train.data.sources.kalshi_models import Candlestick
 from kalshi_train.db.connection import connect
-from kalshi_train.db.point_in_time import pit_value
+from kalshi_train.db.point_in_time import VintagePolicy, pit_value
 
 
 def test_package_imports_and_has_version() -> None:
@@ -74,9 +72,21 @@ def test_pragmas_applied(tmp_db: Path) -> None:
     assert fk == 1, "foreign_keys not enabled"
 
 
-def test_pit_stubs_raise_not_implemented() -> None:
-    with pytest.raises(NotImplementedError):
-        pit_value("CPIAUCSL", "2024-01-01")
+def test_pit_returns_none_on_empty_db(tmp_db: Path) -> None:
+    """Phase 1.1 sanity check: PIT layer is wired and returns None on
+    an empty DB (no leakage either way).
+    """
+    assert pit_value("CPIAUCSL", "2024-01-01", db_path=tmp_db) is None
+    # Same query under both policies should also return None.
+    assert (
+        pit_value(
+            "CPIAUCSL",
+            "2024-01-01",
+            policy=VintagePolicy.FIRST_KNOWN_AT,
+            db_path=tmp_db,
+        )
+        is None
+    )
 
 
 def test_kalshi_models_round_trip() -> None:

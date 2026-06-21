@@ -2,7 +2,7 @@
 
 A learning project: train a fine-tuned LLM to make calibrated probabilistic forecasts on Kalshi macroeconomic markets (Fed decisions, CPI, employment, GDP, yields, recessions) — and rigorously measure whether it beats vanilla LLMs, classical ML baselines, and the market itself.
 
-> **Status:** Phase 0 — project scaffolding.
+> **Status:** Phase 1.1 — point-in-time foundation complete; ready for Phase 1.2 (FRED ingestion).
 
 ---
 
@@ -119,13 +119,15 @@ We stop at every phase boundary and walk through what was built before proceedin
 
 This phase is the longest and most important. We will execute it in sub-phases so we can verify the DB after each.
 
-#### Phase 1.1 — Schema & vintage discipline foundation
+#### Phase 1.1 — Schema & vintage discipline foundation ✓ COMPLETE
 
-- Design and create the full SQLite schema (see [Database schema](#database-schema-conceptual)).
-- Build the `PointInTimeQuery` utility — the *only* legal way features touch labels.
-- Property-based tests that attempt to construct leakage and assert the function rejects it.
+- ✓ Full SQLite schema (see [Database schema](#database-schema-conceptual)).
+- ✓ `pit_value`, `pit_frame`, `pit_history` — the *only* legal way features touch labels.
+- ✓ Property-based tests (Hypothesis) that attempt to construct leakage and assert it's rejected.
+- ✓ `docs/data_spec.md` locking the ~71 priority numeric series with explicit vintage policy per series.
+- ✓ CLI: `kalshi-train pit SERIES --as-of YYYY-MM-DD` for spot-checking.
 
-**Checkpoint:** explain the vintage model and run a sample query.
+**Checkpoint:** see the conversation log for the worked CPI example explaining observation_date / vintage_date / release_date and how the leakage guard works.
 
 #### Phase 1.2 — FRED / ALFRED numeric ingestion
 
