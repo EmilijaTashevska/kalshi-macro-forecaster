@@ -113,10 +113,14 @@ async def test_get_observations_with_vintages_parses_dot_as_none() -> None:
     await client._client.aclose()
 
 
-async def test_get_observations_current_does_not_set_realtime() -> None:
+async def test_get_observations_current_omits_realtime_params() -> None:
+    """The current-values endpoint must NOT set realtime params,
+    because daily series like Treasury yields have so many internal
+    FRED vintages that a full-history query exceeds FRED's per-request
+    cap. The orchestrator handles vintage_date / release_date for
+    non-revising series by overriding to observation_date.
+    """
     def handler(request: httpx.Request) -> httpx.Response:
-        # No realtime params on the current call — returns only the
-        # latest vintage of each observation.
         assert "realtime_start" not in request.url.params
         assert "realtime_end" not in request.url.params
         return httpx.Response(
@@ -125,7 +129,7 @@ async def test_get_observations_current_does_not_set_realtime() -> None:
                 "observations": [
                     {
                         "date": "2024-12-31",
-                        "realtime_start": "2024-12-31",
+                        "realtime_start": "2026-01-15",  # what FRED returns (today-ish, useless)
                         "realtime_end": "9999-12-31",
                         "value": "4.25",
                     }
@@ -180,9 +184,12 @@ async def test_4xx_raises_fred_api_error() -> None:
 
 
 def test_missing_api_key_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """If the env has no key, instantiation must fail loudly."""
+    """If neither env nor .env has a key, instantiation must fail loudly."""
     monkeypatch.delenv("FRED_API_KEY", raising=False)
-    monkeypatch.setattr(cfg, "settings", cfg.Settings())
+    # Build a Settings that explicitly ignores .env (otherwise the
+    # real .env on dev machines would supply a key and defeat the test).
+    settings_no_env = cfg.Settings(_env_file=None)  # type: ignore[call-arg]
+    monkeypatch.setattr(cfg, "settings", settings_no_env)
     with pytest.raises(FredAuthError):
         FredClient()
 

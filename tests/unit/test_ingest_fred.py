@@ -144,22 +144,56 @@ async def test_ingest_nonrevising_series_uses_current_endpoint(tmp_db: Path) -> 
     entry = find("DGS10")
     assert entry is not None and not entry.revises
 
+    # Simulate FRED returning realtime_start = today-ish (the bogus value
+    # we get when no realtime params are passed). The orchestrator must
+    # IGNORE this and use observation_date instead.
+    bogus_today = "2026-06-22"
     fake = _FakeFredClient(
         info=_dgs10_info(),
         obs_current=[
-            FredObservation("2024-12-30", "2024-12-31", "9999-12-31", 4.21),
-            FredObservation("2024-12-31", "2025-01-02", "9999-12-31", 4.23),
+            FredObservation("2024-12-30", bogus_today, "9999-12-31", 4.21),
+            FredObservation("2024-12-31", bogus_today, "9999-12-31", 4.23),
         ],
     )
     result = await ingest_one_series(fake, entry, db_path=tmp_db)
     assert result.success
     assert result.rows_inserted == 2
-    # Should hit `current`, not `with_vintages`
     assert any(c.startswith("cur:DGS10") for c in fake.calls)
     assert not any(c.startswith("vint:DGS10") for c in fake.calls)
 
-    # And the values come out through PIT
-    assert pit_value("DGS10", "2025-01-02", db_path=tmp_db) == 4.23
+    # The values must be visible as of observation_date itself, not
+    # as of bogus_today (2026-06-22). That's the bug we fixed.
+    assert pit_value("DGS10", "2024-12-31", db_path=tmp_db) == 4.23
+    assert pit_value("DGS10", "2024-12-30", db_path=tmp_db) == 4.21
+    # And visible from then forward.
+    assert pit_value("DGS10", "2025-06-01", db_path=tmp_db) == 4.23
+
+
+async def test_nonrevising_series_overrides_realtime_start(tmp_db: Path) -> None:
+    """Lock in the contract: for non-revising series, the stored
+    vintage_date and release_date come from observation_date, NOT from
+    FRED's bogus today-ish realtime_start.
+    """
+    entry = find("DGS10")
+    assert entry is not None
+    fake = _FakeFredClient(
+        info=_dgs10_info(),
+        obs_current=[
+            FredObservation("2024-09-17", "2026-06-22", "9999-12-31", 3.65),
+        ],
+    )
+    await ingest_one_series(fake, entry, db_path=tmp_db)
+
+    with connect(tmp_db, read_only=True) as conn:
+        row = conn.execute(
+            "SELECT observation_date, vintage_date, release_date FROM series_observations "
+            "WHERE series_id='DGS10'"
+        ).fetchone()
+    assert row is not None
+    assert row["observation_date"] == "2024-09-17"
+    # CRUCIAL: vintage_date came from observation_date, NOT from FRED's value.
+    assert row["vintage_date"] == "2024-09-17"
+    assert row["release_date"].startswith("2024-09-17T")
 
 
 # ── release_date is the EARLIEST realtime_start, not today ──────────

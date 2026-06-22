@@ -11,11 +11,11 @@ Run it explicitly with::
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 
+from kalshi_train.config import settings
 from kalshi_train.data.ingest_fred import run_fred_ingest
 from kalshi_train.data.sources.fred import FredClient
 from kalshi_train.db.connection import connect
@@ -24,8 +24,8 @@ from kalshi_train.db.point_in_time import pit_value
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
-        not os.getenv("FRED_API_KEY"),
-        reason="Set FRED_API_KEY to run live FRED integration tests.",
+        settings.fred_api_key is None,
+        reason="Set FRED_API_KEY (env or .env) to run live FRED integration tests.",
     ),
 ]
 

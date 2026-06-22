@@ -132,17 +132,27 @@ def _normalize_frequency(fred_frequency: str) -> str:
 def _to_observation_rows(
     series_id: str,
     fred_obs: list[FredObservation],
+    *,
+    revises: bool,
 ) -> list[Observation]:
-    """Translate FRED vintage rows into our schema's ``Observation`` rows."""
-    release_dates = derive_release_date(fred_obs)
-    out: list[Observation] = []
-    for o in fred_obs:
-        # Skip rows where FRED has NULL value AND realtime semantics
-        # of "not yet existed" — represented in FRED as value="." with
-        # both realtime endpoints set. We keep the row anyway so the
-        # vintage timeline is preserved; null-handling is the PIT
-        # query's responsibility.
-        out.append(
+    """Translate FRED vintage rows into our schema's ``Observation`` rows.
+
+    For REVISING series (CPI, GDP, NFP, ...) we trust FRED's
+    ``realtime_start`` field and store the full vintage history. The
+    schema-level ``release_date`` for each observation is the EARLIEST
+    realtime_start observed across all its vintages — i.e. when FRED
+    first published any value for that period.
+
+    For NON-REVISING series (Treasury yields, S&P close, etc.) the
+    FRED ``realtime_start`` field is not meaningful (see
+    ``FredClient.get_observations_current`` docstring). We override
+    both ``vintage_date`` and ``release_date`` to the observation_date
+    itself — these series produce a value at close-of-business on
+    observation_date and never change it after.
+    """
+    if revises:
+        release_dates = derive_release_date(fred_obs)
+        return [
             Observation(
                 series_id=series_id,
                 observation_date=o.observation_date,
@@ -152,8 +162,19 @@ def _to_observation_rows(
                 vintage_date=o.realtime_start,
                 value=o.value,
             )
+            for o in fred_obs
+        ]
+    # Non-revising: single vintage per observation, knowable at observation_date.
+    return [
+        Observation(
+            series_id=series_id,
+            observation_date=o.observation_date,
+            release_date=_to_release_datetime(o.observation_date),
+            vintage_date=o.observation_date,
+            value=o.value,
         )
-    return out
+        for o in fred_obs
+    ]
 
 
 async def ingest_one_series(
@@ -191,7 +212,7 @@ async def ingest_one_series(
         units=info.units,
         seasonal_adjustment=info.seasonal_adjustment,
     )
-    rows = _to_observation_rows(entry.series_id, obs)
+    rows = _to_observation_rows(entry.series_id, obs, revises=entry.revises)
 
     try:
         with connect(db_path) as conn:

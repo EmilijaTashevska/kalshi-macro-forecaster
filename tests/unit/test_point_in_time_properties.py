@@ -326,31 +326,40 @@ def test_latest_revision_policy_ignores_vintage_constraint(
 def test_adversarial_unreleased_observation_never_leaks(
     pop: tuple[list[FakeObs], date], tmp_db: Path
 ) -> None:
-    """Adversarial scenario: seed the DB with an observation whose
-    release_date is AFTER the as_of_date, with an extreme value that
-    would be obvious if it leaked. Confirm it is never returned.
+    """Adversarial scenario: seed the DB with an observation released
+    AFTER as_of_date and parked at a unique observation_date that no
+    legitimate row in the population can occupy. The PIT query must
+    never select this row.
+
+    We use a unique observation_date (FUTURE_DOMAIN_END) as the sentinel
+    identifier rather than the value field, because Hypothesis can
+    randomly generate values equal to any sentinel we might pick.
     """
     observations, as_of = pop
+    sentinel_obs_date = date(2099, 12, 31)
     sentinel = FakeObs(
-        observation_date=as_of - timedelta(days=1),
+        observation_date=sentinel_obs_date,
         release_date=_release_datetime_for(as_of + timedelta(days=30)),
         vintage_date=as_of + timedelta(days=30),
-        value=999_999.0,  # extreme sentinel
+        value=999_999.0,
     )
     _seed_db(tmp_db, [*observations, sentinel])
 
-    actual = pit_value(
+    # We look at the chosen row's observation_date, not its value, to
+    # detect leakage unambiguously.
+    df = pit_history(
         SERIES_ID,
+        as_of.isoformat(),
         as_of.isoformat(),
         policy=VintagePolicy.FIRST_KNOWN_AT,
         db_path=tmp_db,
     )
-    # The sentinel MUST NOT be returned.
-    if actual is not None:
-        assert actual != 999_999.0, (
-            "Leakage detected: pit_value returned the sentinel value of "
-            "an observation released AFTER the as_of_date."
-        )
+    selected_obs_date = df.iloc[0]["observation_date"]
+    assert selected_obs_date != sentinel_obs_date.isoformat(), (
+        "Leakage detected: pit selected the sentinel row whose "
+        f"observation_date={sentinel_obs_date} and release_date is "
+        "AFTER as_of_date."
+    )
 
 
 @settings(
@@ -366,13 +375,16 @@ def test_adversarial_future_vintage_never_leaks(
     before as_of, but whose vintage_date is AFTER as_of. The original
     vintage is fine, but the revised vintage must not be picked.
 
-    Setup: insert two vintages of the same observation. The earlier
-    vintage is mundane; the later (future-from-as_of) vintage has a
-    sentinel value.
+    We assert via the SELECTED row's vintage_date (a unique sentinel
+    value) rather than via the float value — Hypothesis can synthesize
+    any value collision otherwise.
     """
     observations, as_of = pop
     obs_date = as_of - timedelta(days=1)
     released_at = _release_datetime_for(as_of - timedelta(days=1))
+    # Use a vintage_date far enough in the future that no legitimate
+    # row in the population can ever have it (DOMAIN_END = 2030).
+    sentinel_vintage = date(2099, 12, 31)
 
     original = FakeObs(
         observation_date=obs_date,
@@ -383,19 +395,22 @@ def test_adversarial_future_vintage_never_leaks(
     future_revision = FakeObs(
         observation_date=obs_date,
         release_date=released_at,
-        vintage_date=as_of + timedelta(days=30),
+        vintage_date=sentinel_vintage,
         value=888_888.0,
     )
     _seed_db(tmp_db, [*observations, original, future_revision])
 
-    actual = pit_value(
+    df = pit_history(
         SERIES_ID,
+        as_of.isoformat(),
         as_of.isoformat(),
         policy=VintagePolicy.FIRST_KNOWN_AT,
         db_path=tmp_db,
     )
-    if actual is not None:
-        assert actual != 888_888.0, (
-            "Leakage detected: pit_value returned a vintage whose "
-            "vintage_date is AFTER the as_of_date."
-        )
+    if df.iloc[0]["value"] is None:
+        return
+    selected_vintage = df.iloc[0]["vintage_date"]
+    assert selected_vintage != sentinel_vintage.isoformat(), (
+        "Leakage detected: pit selected a vintage whose vintage_date "
+        f"({sentinel_vintage}) is AFTER as_of_date ({as_of})."
+    )

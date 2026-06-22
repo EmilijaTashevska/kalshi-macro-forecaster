@@ -27,7 +27,7 @@ from typing import Any, Self
 
 import httpx
 
-from kalshi_train.config import settings
+from kalshi_train import config as _config
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ class FredClient:
         rate_limit_delay: float = RATE_LIMIT_DELAY,
     ) -> None:
         if api_key is None:
-            secret = settings.fred_api_key
+            secret = _config.settings.fred_api_key
             if secret is None:
                 raise FredAuthError(
                     "FRED_API_KEY is not set. Get a free key at "
@@ -221,11 +221,21 @@ class FredClient:
         observation_start: str | date | None = None,
         observation_end: str | date | None = None,
     ) -> list[FredObservation]:
-        """Return the *current* (latest-vintage) value of each observation.
+        """Return the current value of each observation, one row each.
 
-        Use for non-revising series (yields, indices) where there is
-        exactly one vintage per observation_date and we don't need to
-        track history.
+        FRED's default behavior (no realtime params) tags every row
+        with realtime_start = today, which is useless for point-in-time
+        because it makes every historical observation look like it was
+        first knowable today. THIS METHOD'S CALLER MUST NOT trust the
+        returned ``realtime_start``; instead, the orchestrator
+        overrides it with ``observation_date`` for non-revising series
+        (whose values are by definition known at observation time).
+
+        We use this rather than a full-history vintage query because
+        FRED caps the number of vintages it will return per request,
+        and high-frequency daily series (yields, futures) blow through
+        that cap. Since non-revising series have no vintage history
+        worth preserving anyway, this is the right trade-off.
         """
         return await self._fetch_observations(
             series_id=series_id,
