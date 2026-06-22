@@ -122,6 +122,86 @@ def _print_metadata(conn: sqlite3.Connection) -> None:
     console.print(table)
 
 
+def _print_series_coverage(conn: sqlite3.Connection) -> None:
+    """Per-series coverage table — only printed once data exists."""
+    if not _table_exists(conn, "series_definitions"):
+        return
+    if _row_count(conn, "series_definitions") == 0:
+        return
+
+    rows = conn.execute(
+        """
+        SELECT d.series_id,
+               d.source,
+               d.category,
+               d.frequency,
+               d.revises,
+               d.first_seen,
+               d.last_seen,
+               COUNT(o.series_id)             AS n_rows,
+               COUNT(DISTINCT o.observation_date) AS n_obs
+        FROM series_definitions d
+        LEFT JOIN series_observations o ON o.series_id = d.series_id
+        GROUP BY d.series_id
+        ORDER BY d.category, d.series_id
+        """
+    ).fetchall()
+
+    table = Table(title="Series coverage")
+    table.add_column("series_id", style="cyan")
+    table.add_column("source", style="dim")
+    table.add_column("category", style="dim")
+    table.add_column("freq", style="dim")
+    table.add_column("revises", justify="center")
+    table.add_column("obs", justify="right")
+    table.add_column("rows", justify="right", style="green")
+    table.add_column("first", style="dim")
+    table.add_column("last", style="dim")
+
+    for r in rows:
+        table.add_row(
+            r["series_id"],
+            r["source"],
+            r["category"],
+            r["frequency"],
+            "✓" if r["revises"] else "·",
+            f"{r['n_obs']:,}",
+            f"{r['n_rows']:,}",
+            r["first_seen"] or "—",
+            r["last_seen"] or "—",
+        )
+    console.print(table)
+
+
+def _print_recent_ingest_runs(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "ingest_runs"):
+        return
+    if _row_count(conn, "ingest_runs") == 0:
+        return
+    rows = conn.execute(
+        "SELECT source, target, started_at, finished_at, status, "
+        "rows_added, error_message FROM ingest_runs "
+        "ORDER BY run_id DESC LIMIT 10"
+    ).fetchall()
+    table = Table(title="Last 10 ingest runs")
+    table.add_column("source", style="cyan")
+    table.add_column("target")
+    table.add_column("started", style="dim")
+    table.add_column("status", style="dim")
+    table.add_column("rows", justify="right", style="green")
+    table.add_column("error", style="red")
+    for r in rows:
+        table.add_row(
+            r["source"],
+            (r["target"] or "")[:40],
+            (r["started_at"] or "")[:19],
+            r["status"],
+            f"{r['rows_added']:,}",
+            (r["error_message"] or "")[:60],
+        )
+    console.print(table)
+
+
 def main() -> None:
     _print_header()
     db_path = settings.kalshi_train_db_path
@@ -133,6 +213,10 @@ def main() -> None:
         _print_row_counts(conn)
         console.print()
         _print_question_templates(conn)
+        console.print()
+        _print_series_coverage(conn)
+        console.print()
+        _print_recent_ingest_runs(conn)
         console.print()
         _print_metadata(conn)
         console.print(f"\n[dim]Generated at {datetime.now().isoformat(timespec='seconds')}[/dim]")

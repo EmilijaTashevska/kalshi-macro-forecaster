@@ -2,7 +2,7 @@
 
 A learning project: train a fine-tuned LLM to make calibrated probabilistic forecasts on Kalshi macroeconomic markets (Fed decisions, CPI, employment, GDP, yields, recessions) — and rigorously measure whether it beats vanilla LLMs, classical ML baselines, and the market itself.
 
-> **Status:** Phase 1.1 — point-in-time foundation complete; ready for Phase 1.2 (FRED ingestion).
+> **Status:** Phase 1.2 — FRED/ALFRED ingestion pipeline built. Awaiting FRED API key to populate the DB with real data.
 
 ---
 
@@ -129,13 +129,16 @@ This phase is the longest and most important. We will execute it in sub-phases s
 
 **Checkpoint:** see the conversation log for the worked CPI example explaining observation_date / vintage_date / release_date and how the leakage guard works.
 
-#### Phase 1.2 — FRED / ALFRED numeric ingestion
+#### Phase 1.2 — FRED / ALFRED numeric ingestion ✓ CODE COMPLETE (awaiting API key)
 
-- Vintage-aware FRED client (uses ALFRED for revisable series, current FRED for non-revisable).
-- Ingest the ~50 priority numeric series listed in `docs/data_spec.md`.
-- Per-series ingestor configs (frequency, vintage policy, transformations).
+- ✓ Vintage-aware async FRED client (`data/sources/fred.py`) with rate limiting, retries, ALFRED vintage queries.
+- ✓ Series registry (`data/registry.py`) codifying the ~60 priority series from `docs/data_spec.md`.
+- ✓ Orchestrator (`data/ingest_fred.py`) that walks the registry and writes through `db/ingest.py`.
+- ✓ CLI: `kalshi-train ingest fred [--series ID]... [--skip-optional] [--observation-start DATE] [--limit N]`.
+- ✓ 16 unit tests (mocked) + 2 live integration tests (auto-skipped without API key).
+- ⏳ To actually run: drop a free FRED key in `.env`, then `kalshi-train ingest fred --skip-optional`.
 
-**Checkpoint:** show the user that `markets` and `series_observations` tables have data; spot-check CPI vintages.
+**Checkpoint:** after the key is added, `make db-summary` shows ~30 series with thousands of observations, and `kalshi-train pit CPIAUCSL --as-of 2024-11-07` returns the actual contemporaneous CPI value.
 
 #### Phase 1.3 — Other numeric sources
 

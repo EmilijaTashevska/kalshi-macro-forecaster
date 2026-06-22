@@ -1,23 +1,29 @@
 """Top-level command-line interface.
 
-Phase 0/1.1 subcommands:
+Available subcommands:
     kalshi-train --version
     kalshi-train init-db                                (idempotent schema apply)
     kalshi-train db-info                                (rows-per-table summary)
     kalshi-train pit SERIES_ID --as-of YYYY-MM-DD       (point-in-time spot check)
     kalshi-train pit-history SERIES_ID --start --end    (PIT timeline)
+    kalshi-train ingest fred [OPTIONS]                  (Phase 1.2 FRED ingest)
 
 More subcommands arrive as we hit each phase.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
+
 import typer
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.table import Table
 
 from kalshi_train import __version__
 from kalshi_train.config import settings
+from kalshi_train.data.ingest_fred import run_fred_ingest
 from kalshi_train.db.connection import connect, init_schema
 from kalshi_train.db.point_in_time import (
     VintagePolicy,
@@ -26,7 +32,20 @@ from kalshi_train.db.point_in_time import (
 )
 
 app = typer.Typer(add_completion=False, help="Kalshi Model Train CLI.")
+ingest_app = typer.Typer(add_completion=False, help="Data ingestion commands.")
+app.add_typer(ingest_app, name="ingest")
 console = Console()
+
+
+def _configure_logging(level: str = "INFO") -> None:
+    """Pretty Rich-backed logging for CLI commands."""
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
+        force=True,
+    )
 
 
 def _version_callback(value: bool) -> None:
@@ -134,6 +153,82 @@ def pit_history_cmd(
             str(row["vintage_date"] or "—"),
         )
     console.print(table)
+
+
+@ingest_app.command("fred")
+def ingest_fred_cmd(
+    series: list[str] = typer.Option(  # noqa: B008
+        [],
+        "--series",
+        "-s",
+        help="Restrict to these series IDs. Repeatable. Default: all in registry.",
+    ),
+    skip_optional: bool = typer.Option(
+        False,
+        "--skip-optional",
+        help="Skip series marked optional in the registry — fast smoke run.",
+    ),
+    observation_start: str | None = typer.Option(
+        "2000-01-01",
+        "--observation-start",
+        help="Earliest observation date to fetch (YYYY-MM-DD).",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        "-n",
+        help="Process only the first N entries after filtering.",
+    ),
+    log_level: str = typer.Option("INFO", "--log-level", help="DEBUG/INFO/WARNING/ERROR."),
+) -> None:
+    """Ingest FRED / ALFRED series into the local SQLite DB.
+
+    Examples::
+
+        # Smoke test: required series only, last ~25 years
+        kalshi-train ingest fred --skip-optional --observation-start 2000-01-01
+
+        # Single series, full vintage history
+        kalshi-train ingest fred -s CPIAUCSL
+
+        # First 5 entries (dev iteration)
+        kalshi-train ingest fred --limit 5
+    """
+    _configure_logging(log_level)
+    if settings.fred_api_key is None:
+        console.print(
+            "[red]FRED_API_KEY is not set.[/red] Get a free key at "
+            "https://fred.stlouisfed.org/docs/api/api_key.html "
+            "and put it in .env."
+        )
+        raise typer.Exit(code=2)
+
+    report = asyncio.run(
+        run_fred_ingest(
+            series_ids=series or None,
+            include_optional=not skip_optional,
+            observation_start=observation_start,
+            limit=limit,
+        )
+    )
+
+    table = Table(title="FRED ingest summary")
+    table.add_column("series_id", style="cyan")
+    table.add_column("rows", justify="right", style="green")
+    table.add_column("status", style="dim")
+    table.add_column("error", style="red")
+    for r in report.results:
+        table.add_row(
+            r.series_id,
+            f"{r.rows_inserted:,}",
+            "ok" if r.success else "fail",
+            (r.error or "")[:80],
+        )
+    console.print(table)
+    console.print(
+        f"[bold]Total:[/bold] {report.n_succeeded} ok, "
+        f"{report.n_failed} failed, [green]{report.total_rows:,}[/green] rows."
+    )
 
 
 if __name__ == "__main__":

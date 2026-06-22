@@ -108,8 +108,11 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["PLR2004", "S101"]
+"tests/**/*.py" = ["PLR2004", "S101", "PT018"]  # PT018: tests often combine sanity-checks
 "scripts/**/*.py" = ["T201"]  # allow print() in scripts
+# The series registry is a deliberately table-formatted data file —
+# columns get wrapped to keep series_id, title, category visually aligned.
+"src/kalshi_train/data/registry.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"
