@@ -7,6 +7,7 @@ Available subcommands:
     kalshi-train pit SERIES_ID --as-of YYYY-MM-DD       (point-in-time spot check)
     kalshi-train pit-history SERIES_ID --start --end    (PIT timeline)
     kalshi-train ingest fred [OPTIONS]                  (Phase 1.2 FRED ingest)
+    kalshi-train ingest spf                             (Phase 1.3 SPF ingest)
 
 More subcommands arrive as we hit each phase.
 """
@@ -24,6 +25,7 @@ from rich.table import Table
 from kalshi_train import __version__
 from kalshi_train.config import settings
 from kalshi_train.data.ingest_fred import run_fred_ingest
+from kalshi_train.data.ingest_spf import run_spf_ingest
 from kalshi_train.db.connection import connect, init_schema
 from kalshi_train.db.point_in_time import (
     VintagePolicy,
@@ -213,6 +215,43 @@ def ingest_fred_cmd(
     )
 
     table = Table(title="FRED ingest summary")
+    table.add_column("series_id", style="cyan")
+    table.add_column("rows", justify="right", style="green")
+    table.add_column("status", style="dim")
+    table.add_column("error", style="red")
+    for r in report.results:
+        table.add_row(
+            r.series_id,
+            f"{r.rows_inserted:,}",
+            "ok" if r.success else "fail",
+            (r.error or "")[:80],
+        )
+    console.print(table)
+    console.print(
+        f"[bold]Total:[/bold] {report.n_succeeded} ok, "
+        f"{report.n_failed} failed, [green]{report.total_rows:,}[/green] rows."
+    )
+
+
+@ingest_app.command("spf")
+def ingest_spf_cmd(
+    log_level: str = typer.Option("INFO", "--log-level", help="DEBUG/INFO/WARNING/ERROR."),
+) -> None:
+    """Ingest the Philly Fed Survey of Professional Forecasters median series.
+
+    Downloads the medianLevel.xlsx workbook from the Philadelphia Fed,
+    extracts the variables we care about (CPI, core CPI, PCE, core
+    PCE, real GDP, unemployment, T-bill, T-bond), and writes derived
+    series (SPF_CPI_MEDIAN_NOWCAST, etc.) into the local SQLite DB.
+
+    No API key required. Example::
+
+        kalshi-train ingest spf
+    """
+    _configure_logging(log_level)
+    report = asyncio.run(run_spf_ingest())
+
+    table = Table(title="SPF ingest summary")
     table.add_column("series_id", style="cyan")
     table.add_column("rows", justify="right", style="green")
     table.add_column("status", style="dim")

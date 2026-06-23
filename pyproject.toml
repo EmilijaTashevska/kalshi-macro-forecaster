@@ -25,6 +25,7 @@ dependencies = [
     "rich>=13.7",
     # DB browsing UI (Phase 0)
     "datasette>=0.64",
+    "openpyxl>=3.1.5",
 ]
 
 [project.optional-dependencies]
