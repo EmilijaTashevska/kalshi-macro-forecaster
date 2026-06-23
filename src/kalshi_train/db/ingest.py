@@ -219,6 +219,194 @@ def bulk_insert_observations(
     return len(rows)
 
 
+# ── kalshi_markets ─────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class KalshiMarketRow:
+    """One Kalshi market plus its classification against our templates.
+
+    ``template_id`` / ``strike_value`` / ``strike_direction`` are filled
+    by the Phase 1.5 classifier; they may be ``None``/"" for markets we
+    ingest for their price history but couldn't structure.
+    """
+
+    ticker: str
+    event_ticker: str
+    series_ticker: str = ""
+    market_type: str = ""
+    title: str = ""
+    subtitle: str = ""
+    yes_sub_title: str = ""
+    no_sub_title: str = ""
+    rules_primary: str = ""
+    rules_secondary: str = ""
+    open_time: str | None = None
+    close_time: str | None = None
+    created_time: str | None = None
+    settlement_time: str | None = None
+    status: str = ""
+    result: str = ""
+    settlement_value_dollars: str | None = None
+    template_id: str | None = None
+    strike_value: float | None = None
+    strike_direction: str = ""
+    last_price_dollars: str = "0.0000"
+    volume_fp: str = "0.00"
+    open_interest_fp: str = "0.00"
+
+
+def upsert_kalshi_market(conn: sqlite3.Connection, market: KalshiMarketRow) -> None:
+    """Insert or refresh a Kalshi market row. Idempotent on ``ticker``.
+
+    ``ingested_at`` is preserved on conflict (first-seen), while
+    ``last_refreshed_at`` and the mutable price/status fields are updated.
+    """
+    conn.execute(
+        """
+        INSERT INTO kalshi_markets (
+            ticker, event_ticker, series_ticker, market_type, title, subtitle,
+            yes_sub_title, no_sub_title, rules_primary, rules_secondary,
+            open_time, close_time, created_time, settlement_time,
+            status, result, settlement_value_dollars,
+            template_id, strike_value, strike_direction,
+            last_price_dollars, volume_fp, open_interest_fp,
+            ingested_at, last_refreshed_at
+        ) VALUES (
+            :ticker, :event_ticker, :series_ticker, :market_type, :title, :subtitle,
+            :yes_sub_title, :no_sub_title, :rules_primary, :rules_secondary,
+            :open_time, :close_time, :created_time, :settlement_time,
+            :status, :result, :settlement_value_dollars,
+            :template_id, :strike_value, :strike_direction,
+            :last_price_dollars, :volume_fp, :open_interest_fp,
+            :now, :now
+        )
+        ON CONFLICT(ticker) DO UPDATE SET
+            event_ticker             = excluded.event_ticker,
+            series_ticker            = excluded.series_ticker,
+            market_type              = excluded.market_type,
+            title                    = excluded.title,
+            subtitle                 = excluded.subtitle,
+            yes_sub_title            = excluded.yes_sub_title,
+            no_sub_title             = excluded.no_sub_title,
+            rules_primary            = excluded.rules_primary,
+            rules_secondary          = excluded.rules_secondary,
+            open_time                = excluded.open_time,
+            close_time               = excluded.close_time,
+            created_time             = excluded.created_time,
+            settlement_time          = excluded.settlement_time,
+            status                   = excluded.status,
+            result                   = excluded.result,
+            settlement_value_dollars = excluded.settlement_value_dollars,
+            template_id              = excluded.template_id,
+            strike_value             = excluded.strike_value,
+            strike_direction         = excluded.strike_direction,
+            last_price_dollars       = excluded.last_price_dollars,
+            volume_fp                = excluded.volume_fp,
+            open_interest_fp         = excluded.open_interest_fp,
+            last_refreshed_at        = excluded.last_refreshed_at
+        """,
+        {
+            "ticker": market.ticker,
+            "event_ticker": market.event_ticker,
+            "series_ticker": market.series_ticker,
+            "market_type": market.market_type,
+            "title": market.title,
+            "subtitle": market.subtitle,
+            "yes_sub_title": market.yes_sub_title,
+            "no_sub_title": market.no_sub_title,
+            "rules_primary": market.rules_primary,
+            "rules_secondary": market.rules_secondary,
+            "open_time": market.open_time,
+            "close_time": market.close_time,
+            "created_time": market.created_time,
+            "settlement_time": market.settlement_time,
+            "status": market.status,
+            "result": market.result,
+            "settlement_value_dollars": market.settlement_value_dollars,
+            "template_id": market.template_id,
+            "strike_value": market.strike_value,
+            "strike_direction": market.strike_direction,
+            "last_price_dollars": market.last_price_dollars,
+            "volume_fp": market.volume_fp,
+            "open_interest_fp": market.open_interest_fp,
+            "now": _now_iso(),
+        },
+    )
+
+
+# ── kalshi_price_history ───────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class PriceHistoryRow:
+    """One daily candlestick of a Kalshi market's price history."""
+
+    ticker: str
+    period_end_ts: int
+    period_end_date: str
+    open_dollars: str | None = None
+    high_dollars: str | None = None
+    low_dollars: str | None = None
+    close_dollars: str | None = None
+    mean_dollars: str | None = None
+    yes_bid_close: str | None = None
+    yes_ask_close: str | None = None
+    volume_fp: str | None = None
+    open_interest_fp: str | None = None
+
+
+def bulk_insert_price_history(
+    conn: sqlite3.Connection, rows: Iterable[PriceHistoryRow]
+) -> int:
+    """Insert many candlesticks at once. Idempotent on (ticker, period_end_ts)."""
+    payload = [
+        {
+            "ticker": r.ticker,
+            "period_end_ts": r.period_end_ts,
+            "period_end_date": r.period_end_date,
+            "open_dollars": r.open_dollars,
+            "high_dollars": r.high_dollars,
+            "low_dollars": r.low_dollars,
+            "close_dollars": r.close_dollars,
+            "mean_dollars": r.mean_dollars,
+            "yes_bid_close": r.yes_bid_close,
+            "yes_ask_close": r.yes_ask_close,
+            "volume_fp": r.volume_fp,
+            "open_interest_fp": r.open_interest_fp,
+        }
+        for r in rows
+    ]
+    if not payload:
+        return 0
+    conn.executemany(
+        """
+        INSERT INTO kalshi_price_history (
+            ticker, period_end_ts, period_end_date,
+            open_dollars, high_dollars, low_dollars, close_dollars, mean_dollars,
+            yes_bid_close, yes_ask_close, volume_fp, open_interest_fp
+        ) VALUES (
+            :ticker, :period_end_ts, :period_end_date,
+            :open_dollars, :high_dollars, :low_dollars, :close_dollars, :mean_dollars,
+            :yes_bid_close, :yes_ask_close, :volume_fp, :open_interest_fp
+        )
+        ON CONFLICT(ticker, period_end_ts) DO UPDATE SET
+            period_end_date  = excluded.period_end_date,
+            open_dollars     = excluded.open_dollars,
+            high_dollars     = excluded.high_dollars,
+            low_dollars      = excluded.low_dollars,
+            close_dollars    = excluded.close_dollars,
+            mean_dollars     = excluded.mean_dollars,
+            yes_bid_close    = excluded.yes_bid_close,
+            yes_ask_close    = excluded.yes_ask_close,
+            volume_fp        = excluded.volume_fp,
+            open_interest_fp = excluded.open_interest_fp
+        """,
+        payload,
+    )
+    return len(payload)
+
+
 # ── ingest_runs (audit) ────────────────────────────────────────────────
 
 

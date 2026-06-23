@@ -95,3 +95,43 @@ class Candlestick(BaseModel):
     volume_fp: str | None = None
     open_interest: str | int | float | None = None
     open_interest_fp: str | None = None
+
+
+class Market(BaseModel):
+    """A single Kalshi market (one binary contract within an event).
+
+    Only the fields we persist to ``kalshi_markets`` are modeled; the
+    live API returns many more (order-book sizes, fee structure, etc.)
+    which we ignore. ``series_ticker`` is *not* part of the market
+    payload — it lives on the parent event, so the orchestrator passes
+    it in separately.
+
+    Price/volume fields already arrive as dollar/float strings on the
+    modern API (``last_price_dollars``, ``volume_fp``); we store them
+    verbatim, consistent with the candlestick handling above.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    ticker: str
+    event_ticker: str = ""
+    market_type: str = ""
+    title: str = ""
+    subtitle: str = ""
+    yes_sub_title: str = ""
+    no_sub_title: str = ""
+    rules_primary: str = ""
+    rules_secondary: str = ""
+
+    open_time: str | None = None
+    close_time: str | None = None
+    created_time: str | None = None
+    settlement_ts: int | None = None
+
+    status: str = ""
+    result: str = ""
+    settlement_value_dollars: str | None = None
+
+    last_price_dollars: str | None = None
+    volume_fp: str | None = None
+    open_interest_fp: str | None = None

@@ -130,12 +130,54 @@ class KalshiClient:
         """Return the historical/live cutoff timestamp."""
         return await self._get("/historical/cutoff")
 
+    async def get_series_by_category(self, category: str) -> list[dict[str, Any]]:
+        """List every series in a category (e.g. "Economics", "Financials").
+
+        The ``/series`` endpoint returns the full category in one shot
+        (no pagination), so we return the list directly.
+        """
+        data = await self._get("/series", {"category": category})
+        series: list[dict[str, Any]] = data.get("series", [])
+        return series
+
+    async def iter_events(
+        self,
+        series_ticker: str,
+        status: str | None = None,
+        batch_size: int = 200,
+    ) -> AsyncIterator[list[dict[str, Any]]]:
+        """Yield pages of events for a series.
+
+        ``status`` filters server-side ("settled", "active", ...);
+        ``None`` returns every event regardless of status.
+        """
+        params: dict[str, Any] = {"series_ticker": series_ticker}
+        if status:
+            params["status"] = status
+        async for batch in self.paginate_batches("/events", "events", params, batch_size):
+            yield batch
+
     async def get_event(self, event_ticker: str) -> dict[str, Any]:
         data = await self._get(f"/events/{event_ticker}")
         event = data.get("event", data)
         if not isinstance(event, dict):
             return {}
         return event
+
+    async def get_event_markets(self, event_ticker: str) -> list[dict[str, Any]]:
+        """Return the markets nested inside an event.
+
+        We request ``with_nested_markets=true`` so the markets come back
+        in the same call as the event detail — one round-trip per event.
+        """
+        data = await self._get(
+            f"/events/{event_ticker}", {"with_nested_markets": "true"}
+        )
+        event = data.get("event", data)
+        if not isinstance(event, dict):
+            return []
+        markets: list[dict[str, Any]] = event.get("markets", [])
+        return markets
 
     async def get_historical_candlesticks(
         self,

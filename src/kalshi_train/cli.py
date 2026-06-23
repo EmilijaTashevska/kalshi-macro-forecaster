@@ -8,6 +8,7 @@ Available subcommands:
     kalshi-train pit-history SERIES_ID --start --end    (PIT timeline)
     kalshi-train ingest fred [OPTIONS]                  (Phase 1.2 FRED ingest)
     kalshi-train ingest spf                             (Phase 1.3 SPF ingest)
+    kalshi-train ingest kalshi [OPTIONS]                (Phase 1.5 Kalshi ingest)
     kalshi-train train fed-cut [OPTIONS]                (Phase 2 XGBoost baseline)
 
 More subcommands arrive as we hit each phase.
@@ -27,6 +28,7 @@ from rich.table import Table
 from kalshi_train import __version__
 from kalshi_train.config import settings
 from kalshi_train.data.ingest_fred import run_fred_ingest
+from kalshi_train.data.ingest_kalshi import run_kalshi_ingest
 from kalshi_train.data.ingest_spf import run_spf_ingest
 from kalshi_train.db.connection import connect, init_schema
 from kalshi_train.db.point_in_time import (
@@ -272,6 +274,85 @@ def ingest_spf_cmd(
     console.print(
         f"[bold]Total:[/bold] {report.n_succeeded} ok, "
         f"{report.n_failed} failed, [green]{report.total_rows:,}[/green] rows."
+    )
+
+
+@ingest_app.command("kalshi")
+def ingest_kalshi_cmd(
+    series: list[str] = typer.Option(  # noqa: B008
+        [],
+        "--series",
+        "-s",
+        help="Restrict to these series tickers (must be on the allowlist). Repeatable.",
+    ),
+    status: str | None = typer.Option(
+        None,
+        "--status",
+        help="Event status filter: settled / active. Default: all.",
+    ),
+    no_prices: bool = typer.Option(
+        False,
+        "--no-prices",
+        help="Skip candlestick downloads — fast structural smoke run.",
+    ),
+    series_limit: int | None = typer.Option(
+        None, "--series-limit", help="Process only the first N series (dev)."
+    ),
+    event_limit: int | None = typer.Option(
+        None, "--event-limit", help="Per series, process only the first N events (dev)."
+    ),
+    log_level: str = typer.Option("INFO", "--log-level", help="DEBUG/INFO/WARNING/ERROR."),
+) -> None:
+    """Ingest Kalshi macro markets + daily price history into SQLite.
+
+    Discovers series in the Economics + Financials categories, keeps the
+    ones on our classifier allowlist, and stores every event/market plus
+    its candlestick price history. No API key required.
+
+    Examples::
+
+        # Full ingest (all allowlisted series, with price history)
+        kalshi-train ingest kalshi
+
+        # Just the Fed series, metadata only, settled events — quick check
+        kalshi-train ingest kalshi -s KXFED --status settled --no-prices
+
+        # First 2 series, 3 events each (dev iteration)
+        kalshi-train ingest kalshi --series-limit 2 --event-limit 3
+    """
+    _configure_logging(log_level)
+    report = asyncio.run(
+        run_kalshi_ingest(
+            series_tickers=series or None,
+            event_status=status,
+            fetch_prices=not no_prices,
+            series_limit=series_limit,
+            event_limit=event_limit,
+        )
+    )
+
+    table = Table(title="Kalshi ingest summary")
+    table.add_column("series", style="cyan")
+    table.add_column("template", style="magenta")
+    table.add_column("markets", justify="right", style="green")
+    table.add_column("candles", justify="right", style="green")
+    table.add_column("status", style="dim")
+    table.add_column("error", style="red")
+    for r in report.results:
+        table.add_row(
+            r.series_ticker,
+            r.template_id,
+            f"{r.markets_ingested:,}",
+            f"{r.candles_ingested:,}",
+            "ok" if r.success else "fail",
+            (r.error or "")[:60],
+        )
+    console.print(table)
+    console.print(
+        f"[bold]Total:[/bold] {report.n_succeeded} series ok, "
+        f"{report.n_failed} failed, "
+        f"[green]{report.total_markets:,}[/green] markets, "
+        f"[green]{report.total_candles:,}[/green] candles."
     )
 
 
