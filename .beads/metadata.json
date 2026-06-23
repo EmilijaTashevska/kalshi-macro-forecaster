@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "Kalshi_Model_Train",
+  "project_id": "80a36937-d73a-40b8-8bc5-516ba45c93d1"
+}
