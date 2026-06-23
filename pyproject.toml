@@ -141,6 +141,8 @@ module = [
     "peft.*",
     "pandas",
     "pandas.*",
+    "sklearn",
+    "sklearn.*",
 ]
 ignore_missing_imports = true
 

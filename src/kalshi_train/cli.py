@@ -8,6 +8,7 @@ Available subcommands:
     kalshi-train pit-history SERIES_ID --start --end    (PIT timeline)
     kalshi-train ingest fred [OPTIONS]                  (Phase 1.2 FRED ingest)
     kalshi-train ingest spf                             (Phase 1.3 SPF ingest)
+    kalshi-train train fed-cut [OPTIONS]                (Phase 2 XGBoost baseline)
 
 More subcommands arrive as we hit each phase.
 """
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -32,10 +34,13 @@ from kalshi_train.db.point_in_time import (
     pit_history,
     pit_value,
 )
+from kalshi_train.training.phase2_fed_cut import run_phase2_fed_cut
 
 app = typer.Typer(add_completion=False, help="Kalshi Model Train CLI.")
 ingest_app = typer.Typer(add_completion=False, help="Data ingestion commands.")
+train_app = typer.Typer(add_completion=False, help="Model training commands.")
 app.add_typer(ingest_app, name="ingest")
+app.add_typer(train_app, name="train")
 console = Console()
 
 
@@ -268,6 +273,54 @@ def ingest_spf_cmd(
         f"[bold]Total:[/bold] {report.n_succeeded} ok, "
         f"{report.n_failed} failed, [green]{report.total_rows:,}[/green] rows."
     )
+
+
+DEFAULT_REPORT_PATH = Path("reports/phase2_xgboost.md")
+
+
+@train_app.command("fed-cut")
+def train_fed_cut_cmd(
+    start: str = typer.Option("2000-01-01", "--start", help="First meeting year (ISO date)."),
+    end: str | None = typer.Option(None, "--end", help="Last meeting (default: today)."),
+    report: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--report",
+        help="Markdown report output path.",
+    ),
+    no_report: bool = typer.Option(False, "--no-report", help="Skip writing the report file."),
+) -> None:
+    """Train the Phase 2 Fed-cut XGBoost baseline with temporal CV.
+
+    Requires FRED series in the DB (``kalshi-train ingest fred``).
+    """
+    report_path = report or DEFAULT_REPORT_PATH
+    try:
+        result = run_phase2_fed_cut(
+            start=start,
+            end=end,
+            report_path=report_path,
+            write_report=not no_report,
+        )
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+
+    table = Table(title="Phase 2 — held-out test metrics")
+    table.add_column("Model", style="cyan")
+    table.add_column("Brier", justify="right")
+    table.add_column("Log loss", justify="right")
+    for name, metrics in result.test_metrics.items():
+        table.add_row(name, f"{metrics.brier:.4f}", f"{metrics.log_loss:.4f}")
+    console.print(table)
+    console.print(
+        f"[bold]{result.n_examples}[/bold] meetings, "
+        f"[bold]{result.n_features}[/bold] features, "
+        f"split {result.train_size}/{result.val_size}/{result.test_size}."
+    )
+    if not no_report:
+        console.print(f"[green]Report:[/green] {result.report_path}")
+    if result.reliability_plot:
+        console.print(f"[green]Plot:[/green] {result.reliability_plot}")
 
 
 if __name__ == "__main__":
